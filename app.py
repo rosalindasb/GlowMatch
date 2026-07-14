@@ -234,7 +234,7 @@ st.markdown("""
         </p>
         <div class="hero-stats">
             <div><div class="hstat-num">1.866</div><div class="hstat-lbl">Produk skincare</div></div>
-            <div><div class="hstat-num">162</div><div class="hstat-lbl">Brand tersedia</div></div>
+            <div><div class="hstat-num">160</div><div class="hstat-lbl">Brand tersedia</div></div>
             <div><div class="hstat-num">8</div><div class="hstat-lbl">Kategori produk</div></div>
             <div><div class="hstat-num">83.7%</div><div class="hstat-lbl">Akurasi Precision@5</div></div>
         </div>
