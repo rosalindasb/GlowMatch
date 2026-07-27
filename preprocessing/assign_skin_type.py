@@ -2,20 +2,59 @@
 Assign skin type ke setiap produk berdasarkan keyword
 di kolom product_name dan description.
 
-Strategi:
-- Cek keyword per skin type di teks gabungan (product_name + description)
-- Khusus "dry": ada pengecekan konteks negatif (negasi)
-- Produk oily+dry otomatis ditambah label "combination"
-- Produk yang tidak ketangkap keyword → "all skin types"
+VERSI REVISI 2 — perbaikan dari audit manual terhadap logika negasi & matching:
+
+FIX BARU DI VERSI INI:
+1. BUG check_dry() early-return: versi sebelumnya berhenti (return) begitu
+   SINONIM PERTAMA dari daftar "dry" ditemukan di teks, tanpa cek sinonim
+   lain dulu. Akibatnya kalau sinonim pertama yang ketemu ternyata ternegasi
+   (mis. "tidak membuat kulit kering"), fungsi langsung menyimpulkan
+   "dry_negated=True" dan TIDAK PERNAH mengecek sinonim lain yang mungkin
+   muncul valid/tidak ternegasi di bagian lain teks yang sama (mis. "cocok
+   untuk kulit extremely dry"). Terbukti via reproduksi manual:
+     teks: "...tidak membuat kulit kering, cocok untuk kulit extremely dry..."
+     versi lama -> (False, 'kulit kering', True)   [SALAH]
+     versi fix  -> (True, 'extremely dry', False)  [BENAR]
+   Fix: lanjutkan scan SEMUA sinonim dulu; baru simpulkan "negated" di akhir
+   kalau memang TIDAK ADA satupun sinonim yang unnegated.
+2. GENERALISASI NEGASI KE 'oily': risiko yang sama sebenarnya berlaku
+   simetris untuk "oily" — deskripsi seperti "tanpa membuat kulit
+   berminyak" (klaim produk TIDAK bikin oily, biasa muncul di produk untuk
+   kulit kering) sebelumnya akan salah ke-label 'oily' karena kata
+   "berminyak" match tanpa cek negasi sama sekali. Sekarang 'oily' dicek
+   dengan mekanisme negasi yang sama seperti 'dry' (fungsi generik
+   `check_type_with_negation`), pakai daftar pola negasi sendiri
+   (OILY_NEGATION_PATTERNS).
+   CATATAN: negasi TIDAK diterapkan ke sensitive/combination/normal/acne.
+   Alasan: kata kunci di kategori itu kebanyakan sudah berbentuk klaim
+   absolut/frasa pasti (mis. "fragrance free", "tanpa pewangi", "hypoallergenic",
+   "anti-acne"), bukan bentuk "membuat kulit jadi X" yang lazim dinegasikan
+   di copywriting skincare. Menambah negasi di situ berisiko over-engineer
+   tanpa temuan kasus nyata yang mendukung, beda dengan oily/dry yang polanya
+   sama-sama "membuat kulit (tidak) berminyak/kering" dan sudah terbukti
+   ada di deskripsi produk.
+3. WORD-BOUNDARY MATCHING: sebelumnya semua non-dry keyword dicek dengan
+   substring polos (`kw in text`), sama seperti pendekatan lama di
+   preprocessing.py sebelum diperbaiki di sana. Sekarang seluruh matching
+   (termasuk oily & dry) pakai regex `\b...\b`, konsisten dengan pendekatan
+   di preprocessing.py, supaya kata kunci pendek tidak salah nempel ke
+   tengah kata lain yang tidak terkait (meski untuk kata kunci yang ada di
+   sini risikonya kecil, ini soal konsistensi & jaga-jaga ke depan kalau
+   kata kunci baru ditambahkan).
+
+PERBAIKAN DARI VERSI SEBELUMNYA (dipertahankan):
+- Kamus 'sensitive' dipersempit: kata generik ("lembut", "menenangkan",
+  "gentle", "soothing", "calming") dibuang karena muncul di hampir semua
+  deskripsi skincare apapun tipenya, sehingga sebelumnya bikin sensitive
+  over-triggered (65,9% dari katalog kelabel sensitive, feature jadi
+  nyaris tidak diskriminatif padahal skin_type berbobot tinggi di CBF).
+- Aturan konsolidasi (match >= N tipe murni -> disederhanakan jadi 'all
+  skin types') DIHAPUS. Produk yang match banyak tipe TETAP disimpan apa
+  adanya, mis. "oily,dry,sensitive,combination" — bukan diringkas.
+- Label 'all skin types' HANYA dipakai untuk fallback murni: produk yang
+  TIDAK match satupun dari 6 kata kunci di atas.
 
 Output: data/sociolla_skincare_labeled.csv
-
-Catatan tambahan (versi laporan):
-- Proses assign dijalankan lewat assign_skin_type_debug() yang selain
-  mengembalikan label akhir, juga merekam keyword mana yang match, apakah
-  negasi "dry" terpicu, dan apakah "combination" ditambahkan otomatis.
-- Info debug ini HANYA dipakai untuk laporan di terminal — kolom yang
-  disimpan ke CSV tetap sama seperti sebelumnya (skin_type saja).
 """
 
 from __future__ import annotations
@@ -38,10 +77,12 @@ SKIN_TYPE_KEYWORDS: dict[str, list[str]] = {
         "extremely dry", "moisture barrier", "kulit dehidrasi",
         "skin dehidrasi", "dehydrated skin",
     ],
+    # kata generik "lembut", "menenangkan", "gentle", "soothing", "calming"
+    # DIBUANG — bukan klaim eksklusif sensitive, muncul di hampir semua
+    # produk apapun tipenya.
     "sensitive": [
         "sensitive skin", "kulit sensitif", "sensitive", "sensitif",
         "fragrance free", "fragrance-free", "hypoallergenic",
-        "calming", "soothing", "menenangkan", "gentle", "lembut",
         "no fragrance", "tanpa pewangi", "skin barrier", "barrier repair",
         "untuk kulit sensitif",
     ],
@@ -63,6 +104,10 @@ SKIN_TYPE_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
+# Pola negasi HANYA didefinisikan untuk tipe yang polanya "membuat kulit
+# (tidak) jadi X" — pola yang lazim muncul di copywriting skincare untuk
+# oily & dry. Tipe lain (sensitive/combination/normal/acne) sengaja tidak
+# diberi pola negasi, lihat alasan di poin 2 pada docstring di atas.
 DRY_NEGATION_PATTERNS = [
     r"tanpa membuat kulit kering",
     r"tanpa membuat.{0,20}kering",
@@ -77,14 +122,43 @@ DRY_NEGATION_PATTERNS = [
     r"avoid.{0,25}dry",
 ]
 
-ORDER = ["oily", "dry", "sensitive", "combination", "normal", "acne"]
+OILY_NEGATION_PATTERNS = [
+    r"tanpa membuat kulit berminyak",
+    r"tanpa membuat.{0,20}berminyak",
+    r"tidak membuat.{0,20}berminyak",
+    r"without (making|leaving).{0,20}oily",
+    r"non[- ]greasy",
+    r"without.{0,10}greasy",
+    r"tidak.{0,25}berminyak",
+    r"tanpa.{0,25}berminyak",
+    r"mencegah.{0,25}berminyak",
+    r"prevent.{0,25}oily",
+    r"avoid.{0,25}oily",
+]
 
-# "acne" adalah concern (masalah kulit), bukan tipe kulit — jadi tidak dihitung
-# dalam aturan konsolidasi ini. Kalau sebuah produk match >= CONSOLIDATION_THRESHOLD
-# dari 5 tipe kulit murni di bawah ini, produk itu dianggap generik/cocok untuk
-# semua tipe kulit, dan label-nya disederhanakan jadi "all skin types".
+# Skin type yang punya mekanisme negasi (pakai check_type_with_negation).
+# Skin type di luar daftar ini dicek dengan word-boundary match polos
+# (lihat match_keywords_plain), tanpa negation-scope checking.
+NEGATION_PATTERNS: dict[str, list[str]] = {
+    "dry": DRY_NEGATION_PATTERNS,
+    "oily": OILY_NEGATION_PATTERNS,
+}
+
+ORDER = ["oily", "dry", "sensitive", "combination", "normal", "acne"]
 PURE_SKIN_TYPES = ["oily", "dry", "sensitive", "combination", "normal"]
-CONSOLIDATION_THRESHOLD = 4
+NEGATION_WINDOW = 40  # karakter, dipakai di negation-scope check
+
+# CATATAN: aturan konsolidasi (>= N tipe murni match -> disederhanakan jadi
+# 'all skin types') SENGAJA DIHAPUS. Alasan: threshold-nya selalu jadi
+# keputusan heuristik yang gak bisa dipertanggungjawabkan secara objektif
+# ("kenapa 4, bukan 3?"), dan yang lebih penting, konsolidasi membuang
+# informasi (mis. keyword 'oily' yang beneran match hilang dari label)
+# padahal skin_type dipakai sebagai fitur berbobot tinggi di TF-IDF. Produk
+# yang match banyak tipe sekarang TETAP disimpan apa adanya, mis.
+# "oily,dry,sensitive,combination" -- bukan diringkas jadi "all skin types".
+# 'all skin types' sekarang HANYA dipakai untuk fallback murni: produk yang
+# TIDAK match satupun dari 6 kata kunci di atas (nggak ada keputusan
+# ambang sama sekali, batasnya jelas: ada info vs nggak ada info).
 
 
 # ==============================================================
@@ -120,7 +194,6 @@ def show_examples(items, label: str, max_items: int = 5) -> None:
 
 
 def snippet(text: str, keyword: str, window: int = 35) -> str:
-    """Ambil potongan teks di sekitar keyword pertama kali muncul, untuk konteks."""
     idx = text.find(keyword)
     if idx == -1:
         return text[:60]
@@ -131,90 +204,128 @@ def snippet(text: str, keyword: str, window: int = 35) -> str:
     return f"{prefix}{text[start:end].strip()}{suffix}"
 
 
-def has_dry_negation(text: str) -> re.Match | None:
-    for pat in DRY_NEGATION_PATTERNS:
-        m = re.search(pat, text)
-        if m:
-            return m
+# ==============================================================
+# WORD-BOUNDARY KEYWORD MATCHING
+# ==============================================================
+# FIX (v2): sebelumnya keyword non-dry dicek dengan substring polos
+# (`kw in text`). Sekarang semua keyword (termasuk multi-kata seperti
+# "oily skin") dicek dengan regex \b...\b, supaya konsisten dengan
+# pendekatan di preprocessing.py dan lebih aman terhadap kata kunci pendek
+# yang berpotensi nempel di tengah kata lain (mis. kalau suatu saat ada
+# kata kunci baru yang pendek ditambahkan).
+_KEYWORD_REGEX_CACHE: dict[str, "re.Pattern"] = {}
+
+
+def _keyword_pattern(kw: str) -> "re.Pattern":
+    if kw not in _KEYWORD_REGEX_CACHE:
+        _KEYWORD_REGEX_CACHE[kw] = re.compile(r"\b" + re.escape(kw) + r"\b", flags=re.IGNORECASE)
+    return _KEYWORD_REGEX_CACHE[kw]
+
+
+def _find_all_indices(text: str, kw: str) -> list[tuple[int, int]]:
+    """Return list of (start, end) span untuk tiap kemunculan kw (word-boundary)."""
+    return [m.span() for m in _keyword_pattern(kw).finditer(text)]
+
+
+def _negation_near(text: str, start: int, end: int, negation_patterns: list[str],
+                    window: int = NEGATION_WINDOW):
+    """Cek pola negasi HANYA di window lokal sekitar kemunculan kata kunci
+    (bukan di seluruh teks), supaya negasi di bagian teks yang tidak
+    terkait tidak salah nge-cancel klaim yang valid di bagian lain."""
+    win_start = max(0, start - window)
+    win_end = min(len(text), end + window)
+    local = text[win_start:win_end]
+    for pat in negation_patterns:
+        if re.search(pat, local):
+            return True
+    return False
+
+
+def match_keywords_plain(text: str, keywords: list[str]) -> str | None:
+    """Word-boundary match TANPA negation-check. Return sinonim pertama yang
+    match, atau None kalau tidak ada yang match sama sekali."""
+    for kw in keywords:
+        if _keyword_pattern(kw).search(text):
+            return kw
     return None
 
 
+def check_type_with_negation(text: str, skin_type: str):
+    """
+    Generalisasi dari check_dry() lama: cek SEMUA sinonim untuk suatu skin
+    type dulu sebelum menyimpulkan "negated". Kalau MINIMAL SATU kemunculan
+    (dari sinonim manapun) tidak ternegasi, dianggap match — tidak berhenti
+    di sinonim pertama seperti bug versi lama.
+
+    Return (matched: bool, keyword: str|None, all_occurrences_negated: bool)
+    """
+    keywords = SKIN_TYPE_KEYWORDS[skin_type]
+    negation_patterns = NEGATION_PATTERNS.get(skin_type, [])
+
+    found_negated_kw = None
+    for kw in keywords:
+        spans = _find_all_indices(text, kw)
+        if not spans:
+            continue
+        any_not_negated = any(
+            not _negation_near(text, s, e, negation_patterns) for s, e in spans
+        )
+        if any_not_negated:
+            return True, kw, False
+        elif found_negated_kw is None:
+            found_negated_kw = kw
+
+    if found_negated_kw:
+        return False, found_negated_kw, True
+    return False, None, False
+
+
 # ==============================================================
-# CORE LOGIC — dengan versi debug untuk pelaporan
+# CORE LOGIC
 # ==============================================================
 def assign_skin_type_debug(product_name: str, description: str) -> dict:
-    """
-    Sama seperti assign_skin_type, tapi mengembalikan info tambahan:
-    - label            : hasil akhir skin_type (string, dipisah koma)
-    - matched_types    : list skin type yang match (SEBELUM konsolidasi)
-    - keyword_hits     : {skin_type: keyword_yang_match}
-    - dry_negated      : True kalau keyword 'dry' ketemu TAPI dibatalkan oleh negasi
-    - dry_negation_info: (keyword_dry, pattern_negasi, teks) kalau dry_negated True
-    - combination_auto : True kalau 'combination' ditambahkan otomatis (oily+dry)
-    - consolidated      : True kalau label disederhanakan jadi 'all skin types'
-                           karena match >= CONSOLIDATION_THRESHOLD tipe kulit murni
-    - label_before_consolidation : label yang akan dihasilkan SEBELUM aturan
-                           konsolidasi diterapkan (buat perbandingan di laporan)
-    """
     text = (str(product_name).lower() + " " + str(description).lower())
     matched: list[str] = []
     keyword_hits: dict[str, str] = {}
-    dry_negated = False
-    dry_negation_info = None
+    negated_types: list[str] = []  # tipe yang keyword-nya ketemu tapi SEMUA ternegasi
 
-    for skin_type, keywords in SKIN_TYPE_KEYWORDS.items():
-        if skin_type == "dry":
-            for kw in keywords:
-                if kw in text:
-                    neg_match = has_dry_negation(text)
-                    if neg_match is None:
-                        matched.append(skin_type)
-                        keyword_hits["dry"] = kw
-                    else:
-                        dry_negated = True
-                        dry_negation_info = (kw, neg_match.group(0), text)
-                    break
+    for skin_type in SKIN_TYPE_KEYWORDS:
+        if skin_type in NEGATION_PATTERNS:
+            ok, kw, negated = check_type_with_negation(text, skin_type)
+            if ok:
+                matched.append(skin_type)
+                keyword_hits[skin_type] = kw
+            elif negated:
+                negated_types.append(skin_type)
         else:
-            for kw in keywords:
-                if kw in text:
-                    matched.append(skin_type)
-                    keyword_hits[skin_type] = kw
-                    break
+            kw = match_keywords_plain(text, SKIN_TYPE_KEYWORDS[skin_type])
+            if kw:
+                matched.append(skin_type)
+                keyword_hits[skin_type] = kw
 
     combination_auto = False
     if "oily" in matched and "dry" in matched and "combination" not in matched:
         matched.append("combination")
         combination_auto = True
 
-    label_before_consolidation = (
-        ",".join([s for s in ORDER if s in matched]) if matched else "all skin types"
-    )
-
-    # ---- aturan konsolidasi: terlalu banyak tipe murni yang match → generik ----
-    pure_matched = [t for t in matched if t in PURE_SKIN_TYPES]
-    consolidated = len(pure_matched) >= CONSOLIDATION_THRESHOLD
-    if consolidated:
-        parts = ["all skin types"]
-        if "acne" in matched:
-            parts.append("acne")
-        label = ",".join(parts)
+    # 'all skin types' HANYA untuk fallback murni (tidak match satupun
+    # keyword). Produk yang match banyak tipe TETAP disimpan apa adanya,
+    # tidak ada lagi penyederhanaan/ambang jumlah tipe.
+    if not matched:
+        label = "all skin types"
     else:
-        label = label_before_consolidation
+        label = ",".join([s for s in ORDER if s in matched])
 
     return {
         "label": label,
         "matched_types": matched,
         "keyword_hits": keyword_hits,
-        "dry_negated": dry_negated,
-        "dry_negation_info": dry_negation_info,
+        "negated_types": negated_types,  # dulu cuma "dry_negated: bool", sekarang list (dry & oily)
         "combination_auto": combination_auto,
-        "consolidated": consolidated,
-        "label_before_consolidation": label_before_consolidation,
     }
 
 
 def assign_skin_type(product_name: str, description: str) -> str:
-    """Versi ringkas (dipakai kalau hanya butuh label, tanpa debug info)."""
     return assign_skin_type_debug(product_name, description)["label"]
 
 
@@ -229,10 +340,7 @@ def main() -> None:
     df = pd.read_csv(INPUT_PATH)
     section("STEP 1 — LOAD DATA")
     print(f"[LOAD] {len(df)} produk dari '{INPUT_PATH}'")
-    print(f"Kolom skin_type sebelum assign : kosong untuk semua baris "
-          f"({df['skin_type'].isna().sum() if 'skin_type' in df.columns else len(df)} dari {len(df)})")
 
-    # ---- jalankan assign dengan debug info ----
     debug_results = [
         assign_skin_type_debug(
             row["product_name"],
@@ -246,7 +354,6 @@ def main() -> None:
     total = len(df)
     print(f"Total produk di-assign : {total}")
 
-    # ---- distribusi per skin type (multi-label, produk bisa dihitung >1x) ----
     subsection("Distribusi skin type (satu produk bisa punya >1 label)")
     all_types = []
     for st in df["skin_type"]:
@@ -255,109 +362,45 @@ def main() -> None:
     for skin, count in type_counts.items():
         print(f"  {skin:<20}: {count:>5} produk  ({pct(count, total)})")
 
-    # ---- distribusi jumlah label per produk ----
-    subsection("Distribusi jumlah label per produk")
-    n_labels = df["skin_type"].apply(lambda s: len(str(s).split(",")))
-    label_count_dist = n_labels.value_counts().sort_index()
-    for n, count in label_count_dist.items():
-        ket = "label" if n > 1 else "label (single)"
-        print(f"  {n} {ket:<15}: {count:>5} produk  ({pct(count, total)})")
-
-    # ---- top kombinasi label ----
-    subsection("Top 10 kombinasi label paling umum")
-    combo_counts = df["skin_type"].value_counts().head(10)
-    for combo, count in combo_counts.items():
-        print(f"  {combo:<35}: {count:>5} produk  ({pct(count, total)})")
-
-    # ---- fallback all skin types ----
-    fallback = (df["skin_type"] == "all skin types").sum()
-    print(f"\nProduk fallback 'all skin types' (tidak match keyword apapun) : "
-          f"{fallback}  ({pct(fallback, total)})")
-
-    # ---- keyword paling sering trigger per skin type ----
-    subsection("Keyword paling sering trigger per skin type")
-    keyword_counter: dict[str, dict[str, int]] = {t: {} for t in SKIN_TYPE_KEYWORDS}
+    # Distribusi jumlah tipe murni yang match per produk -- buat narasi Bab 4
+    # soal seberapa umum produk match banyak tipe sekaligus (tanpa ada aturan
+    # konsolidasi/ambang lagi, ini murni informasi deskriptif).
+    section("STEP 3 — DISTRIBUSI JUMLAH TIPE MURNI YANG MATCH PER PRODUK")
+    pure_counts = {}
     for r in debug_results:
-        for skin_type, kw in r["keyword_hits"].items():
-            keyword_counter[skin_type][kw] = keyword_counter[skin_type].get(kw, 0) + 1
-    for skin_type in ORDER:
-        counts = keyword_counter.get(skin_type, {})
-        if not counts:
-            continue
-        top_kw = sorted(counts.items(), key=lambda x: -x[1])[:3]
-        top_str = ", ".join([f"'{k}' ({v}x)" for k, v in top_kw])
-        print(f"  {skin_type:<12}: {top_str}")
+        n = len([t for t in r["matched_types"] if t in PURE_SKIN_TYPES])
+        pure_counts[n] = pure_counts.get(n, 0) + 1
+    for n in sorted(pure_counts):
+        print(f"  match {n} tipe murni : {pure_counts[n]:>5} produk  ({pct(pure_counts[n], total)})")
 
-    # ---- bukti mekanisme negasi "dry" ----
-    section("STEP 3 — BUKTI MEKANISME NEGASI 'DRY'")
-    negated = [
-        (row["product_name"], r["dry_negation_info"])
-        for (_, row), r in zip(df.iterrows(), debug_results)
-        if r["dry_negated"]
-    ]
-    print(f"Jumlah produk yang mengandung keyword 'dry' TAPI dibatalkan oleh negasi: {len(negated)}")
-    if negated:
-        examples = []
-        for name, info in negated:
-            kw, pattern_matched, text = info
-            pattern_display = pattern_matched if len(pattern_matched) <= 60 else pattern_matched[:57] + "..."
-            examples.append(
-                f"{name}\n"
-                f"      keyword ditemukan : '{kw}'  |  pattern negasi match: '{pattern_display}'\n"
-                f"      konteks           : \"{snippet(text, kw)}\""
-            )
-        show_examples(examples, "produk dengan keyword 'dry' yang dinegasikan", max_items=3)
-    else:
-        print("  Tidak ada produk yang kena kasus negasi pada dataset ini.")
+    fallback_n = int((df["skin_type"] == "all skin types").sum())
+    section("STEP 4 — PRODUK FALLBACK 'ALL SKIN TYPES' (tidak match keyword apapun)")
+    print(f"  Jumlah produk fallback : {fallback_n}  ({pct(fallback_n, total)})")
 
-    # ---- bukti auto-label combination ----
-    section("STEP 4 — BUKTI AUTO-LABEL 'COMBINATION' (oily + dry)")
-    combo_auto = [
-        row["product_name"]
-        for (_, row), r in zip(df.iterrows(), debug_results)
-        if r["combination_auto"]
-    ]
-    print(f"Jumlah produk yang otomatis ditambah label 'combination' karena oily+dry: {len(combo_auto)}")
-    show_examples(combo_auto, "produk dengan auto-label 'combination'", max_items=5)
+    # bukti negasi dry & oily (sekarang lokal per window, generalisasi v2)
+    section("STEP 5 — BUKTI NEGASI (LOKAL, dry & oily)")
+    for t in ["dry", "oily"]:
+        negated = [
+            row["product_name"] for (_, row), r in zip(df.iterrows(), debug_results)
+            if t in r["negated_types"]
+        ]
+        print(f"\n  Tipe '{t}': {len(negated)} produk dengan SEMUA kemunculan keyword ternegasi")
+        show_examples(negated, f"produk dengan '{t}' ternegasi", max_items=5)
 
-    # ---- bukti aturan konsolidasi ke "all skin types" ----
-    section(f"STEP 5 — BUKTI KONSOLIDASI (match ≥ {CONSOLIDATION_THRESHOLD} tipe kulit murni → 'all skin types')")
-    consolidated_list = [
-        (row["product_name"], r["label_before_consolidation"], r["label"])
-        for (_, row), r in zip(df.iterrows(), debug_results)
-        if r["consolidated"]
-    ]
-    print(f"Jumlah produk yang label-nya disederhanakan jadi 'all skin types' : {len(consolidated_list)}")
-    if consolidated_list:
-        examples = [f"{name}\n      sebelum : {before}\n      sesudah : {after}"
-                    for name, before, after in consolidated_list]
-        show_examples(examples, "produk yang dikonsolidasi", max_items=3)
-    else:
-        print("  Tidak ada produk yang kena aturan konsolidasi pada dataset ini.")
-
-    # ---- contoh random hasil assign, dilengkapi keyword yang match ----
-    section("STEP 6 — CONTOH HASIL ASSIGN (RANDOM SAMPLE)")
-    sample_n = min(10, len(df))
-    sample_idx = df.sample(sample_n, random_state=42).index
-    for idx in sample_idx:
-        row = df.loc[idx]
-        r = debug_results[idx]
-        print(f"  [{row['category']}] {str(row['product_name'])[:55]}")
-        print(f"    → skin_type     : {row['skin_type']}")
-        if r["keyword_hits"]:
-            hits_str = ", ".join([f"{t}←'{k}'" for t, k in r["keyword_hits"].items()])
-            print(f"    → keyword match : {hits_str}")
-        else:
-            print(f"    → keyword match : (tidak ada, fallback 'all skin types')")
+    # bukti auto combination
+    section("STEP 6 — BUKTI AUTO-LABEL 'COMBINATION'")
+    combo_auto = [row["product_name"] for (_, row), r in zip(df.iterrows(), debug_results) if r["combination_auto"]]
+    print(f"Jumlah produk auto-label combination: {len(combo_auto)}")
+    show_examples(combo_auto, "produk auto-label combination", max_items=5)
 
     elapsed = time.time() - start_time
     section("SELESAI")
-    print(f"Waktu eksekusi assign_skin_type : {elapsed:.2f} detik")
+    print(f"Waktu eksekusi : {elapsed:.2f} detik")
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
-    print(f"Disimpan ke                      : {OUTPUT_PATH}")
-    print(f"Total produk berlabel             : {len(df)}")
+    print(f"Disimpan ke     : {OUTPUT_PATH}")
+    print(f"Total berlabel  : {len(df)}")
 
 
 if __name__ == "__main__":

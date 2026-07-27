@@ -4,7 +4,6 @@ Evaluasi sistem rekomendasi Glowmatch (Content-Based Filtering)
 METRIK EVALUASI (Per-Product Evaluation, dalam kategori yang sama —
 konsisten dengan hard filter kategori yang dipakai di recommender.py & app.py):
 - Precision@5 : proporsi item relevan dalam Top-5 rekomendasi
-- NDCG@5      : kualitas ranking berdasarkan posisi rekomendasi
 
 DEFINISI RELEVANSI:
 Sebuah produk dianggap relevan jika memiliki minimal 1 skin_type yang sama
@@ -13,7 +12,10 @@ dengan produk input. Produk dengan label "all skin types" juga dianggap relevan.
 CATATAN METODOLOGI PENTING:
 Rekomendasi SELALU dibatasi ke kategori yang sama dengan produk input — ini
 SENGAJA dibuat konsisten dengan recommender.py (hard filter kategori aktif
-by default) dan app.py (get_recs() juga filter kategori).
+by default) dan app.py (get_recs() juga filter kategori). Kesamaan kategori
+karena itu BUKAN kriteria relevansi yang diukur (karena selalu terpenuhi
+akibat hard filter), melainkan syarat pembentukan kandidat Top-5. Kriteria
+relevansi yang benar-benar diukur adalah kesamaan skin type.
 
 CATATAN: Recall@K sengaja TIDAK digunakan pada evaluasi ini. Recall@K
 membutuhkan populasi "item relevan" sebagai pembagi, dan pada dataset ini
@@ -87,24 +89,11 @@ def skin_type_overlap(input_skin: str, rec_skin: str) -> bool:
 
 
 # ==============================================================
-# NDCG FUNCTION
-# ==============================================================
-def dcg(relevances):
-    return sum(rel / np.log2(i + 2) for i, rel in enumerate(relevances))
-
-
-def ndcg_at_k(relevances):
-    ideal = sorted(relevances, reverse=True)
-    ideal_dcg = dcg(ideal)
-    return dcg(relevances) / ideal_dcg if ideal_dcg > 0 else 0.0
-
-
-# ==============================================================
-# EVALUATION — precision & ndcg, dalam kategori yang sama, similarity
+# EVALUATION — precision, dalam kategori yang sama, similarity
 # dihitung SEKALI untuk seluruh matrix (konsisten dengan optimasi di
 # recommender.py)
 # ==============================================================
-section(f"EVALUASI PER-PRODUK — PRECISION / NDCG @{K}")
+section(f"EVALUASI PER-PRODUK — PRECISION@{K}")
 start = time.time()
 total = len(df)
 
@@ -116,8 +105,7 @@ categories = df["category"].values
 skin_types = df["skin_type"].values
 
 precision_list = []
-ndcg_list      = []
-cat_metrics    = {}  # category -> {"precision": [...], "ndcg": [...]}
+cat_metrics    = {}  # category -> {"precision": [...]}
 
 skipped = 0
 skipped_by_cat = {}
@@ -145,7 +133,7 @@ for pos in range(total):
     order = np.argsort(-sims[cat_positions])
     topk_pos = cat_positions[order[:K]]
 
-    # Relevance vector buat Top-K (dipakai Precision & NDCG)
+    # Relevance vector buat Top-K (dipakai Precision)
     relevances = [
         1 if skin_type_overlap(row_skin, skin_types[p]) else 0
         for p in topk_pos
@@ -155,13 +143,8 @@ for pos in range(total):
     precision = sum(relevances) / K
     precision_list.append(precision)
 
-    # ---- NDCG@K ----
-    ndcg = ndcg_at_k(relevances)
-    ndcg_list.append(ndcg)
-
-    bucket = cat_metrics.setdefault(row_cat, {"precision": [], "ndcg": []})
+    bucket = cat_metrics.setdefault(row_cat, {"precision": []})
     bucket["precision"].append(precision)
-    bucket["ndcg"].append(ndcg)
 
 elapsed = time.time() - start
 
@@ -181,17 +164,11 @@ print(f"Produk dievaluasi : {n_eval} dari {total}  ({pct(n_eval / total)})")
 print(f"Produk dilewati   : {skipped}")
 
 print(f"\nPrecision@{K} : {pct(np.mean(precision_list))}")
-print(f"NDCG@{K}      : {np.mean(ndcg_list):.4f}")
 
-subsection(f"Distribusi metrik per kategori")
+subsection(f"Distribusi Precision@{K} per kategori")
 for cat, m in sorted(cat_metrics.items(), key=lambda x: -np.mean(x[1]["precision"])):
     n = len(m["precision"])
-    print(
-        f"  {cat:<25}: "
-        f"Precision={np.mean(m['precision']):.4f}  "
-        f"NDCG={np.mean(m['ndcg']):.4f}  "
-        f"(n={n})"
-    )
+    print(f"  {cat:<25}: Precision={np.mean(m['precision']):.4f}  (n={n})")
 
 print(f"\nWaktu eksekusi evaluasi : {elapsed:.2f} detik")
 print(f"\n[DONE] Evaluasi selesai.")

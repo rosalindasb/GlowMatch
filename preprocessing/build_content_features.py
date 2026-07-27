@@ -30,19 +30,17 @@ import pandas as pd
 INPUT_PATH  = "data/sociolla_skincare_labeled.csv"
 OUTPUT_PATH = "data/sociolla_skincare_featured.csv"
 
-# bobot pengulangan per kolom, dipakai juga untuk verifikasi di laporan
+# bobot pengulangan per kolom
 WEIGHTS = {
-    "category": 6,
+    "category": 0,
     "skin_type": 5,
-    "product_name": 4,
+    "product_name": 2,
     "brand": 1,
     "description": 1,
 }
 
 
-# ==============================================================
-# HELPER — print & formatting
-# ==============================================================
+
 def pct(part: int, total: int) -> str:
     if total == 0:
         return "0.00%"

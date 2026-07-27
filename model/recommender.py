@@ -100,7 +100,7 @@ def build_model(df: pd.DataFrame):
 
     vectorizer = TfidfVectorizer(
         analyzer="word",
-        ngram_range=(1, 1),     # [TUNE] unigram only — lebih baik untuk matching nama produk
+        ngram_range=(1, 2),    
         min_df=2,
         max_df=0.95,
         sublinear_tf=True,
