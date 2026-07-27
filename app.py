@@ -229,14 +229,14 @@ st.markdown("""
         <div class="hero-eyebrow">✦ Sistem Rekomendasi Skincare</div>
         <h1 class="hero-h1">Temukan <em>skincare</em><br>yang tepat<br>untukmu.</h1>
         <p class="hero-p">
-            Glowmatch adalah sistem rekomendasi skincare berbasis <strong>Content-Based Filtering (CBF)</strong> yang dibangun menggunakan data 1.866 produk dari Sociolla.<br><br>
+            Glowmatch adalah sistem rekomendasi skincare berbasis <strong>Content-Based Filtering (CBF)</strong> yang dibangun menggunakan data 1.844 produk dari Sociolla.<br><br>
             Sistem ini menganalisis kemiripan antar produk berdasarkan kategori, skin type, nama produk, deskripsi, dan brand — lalu menghitung skor kemiripan menggunakan <strong>TF-IDF &amp; Cosine Similarity</strong>.
         </p>
         <div class="hero-stats">
-            <div><div class="hstat-num">1.866</div><div class="hstat-lbl">Produk skincare</div></div>
+            <div><div class="hstat-num">1.844</div><div class="hstat-lbl">Produk skincare</div></div>
             <div><div class="hstat-num">162</div><div class="hstat-lbl">Brand tersedia</div></div>
             <div><div class="hstat-num">8</div><div class="hstat-lbl">Kategori produk</div></div>
-            <div><div class="hstat-num">83.7%</div><div class="hstat-lbl">Akurasi Precision@5</div></div>
+            <div><div class="hstat-num">83.41%</div><div class="hstat-lbl">Akurasi Precision@5</div></div>
         </div>
     </div>
     <div class="hero-right">
@@ -257,8 +257,8 @@ st.markdown("""
         </div>
         <div class="hcard-feat">
             <span class="hcard-feat-icon">📊</span>
-            <div class="hcard-feat-title">Precision@5 = 83.7%</div>
-            <div class="hcard-feat-desc">Dievaluasi terhadap seluruh 1.866 produk menggunakan metrik Precision@5.</div>
+            <div class="hcard-feat-title">Precision@5 = 83.41%</div>
+            <div class="hcard-feat-desc">Dievaluasi terhadap seluruh 1.844 produk menggunakan metrik Precision@5.</div>
         </div>
     </div>
 </section>
@@ -308,7 +308,7 @@ st.markdown(f"""
     <div class="sec-eyebrow">Statistik Dataset</div>
     <h2 class="sec-h2" style="margin-bottom:0.5rem">Distribusi produk<br>per <em>kategori</em>.</h2>
     <p style="font-size:0.9rem;color:var(--muted);font-weight:300;margin-bottom:2.5rem">
-        Dari 1.866 produk skincare yang dikumpulkan dari Sociolla,
+        Dari 1.844 produk skincare yang dikumpulkan dari Sociolla,
         berikut sebaran produk di setiap kategori.
     </p>
     {chart_spacer}
@@ -387,7 +387,7 @@ st.markdown("""
 <section class="cta-sec">
     <div class="cta-inner">
         <h2 class="cta-h2">Siap menemukan<br><em>skincare match</em>-mu?</h2>
-        <p class="cta-p">Mulai jelajahi 1.866 produk skincare dan dapatkan rekomendasi personal yang sesuai dengan jenis kulitmu.</p>
+        <p class="cta-p">Mulai jelajahi 1.844 produk skincare dan dapatkan rekomendasi personal yang sesuai dengan jenis kulitmu.</p>
     </div>
 </section>
 """, unsafe_allow_html=True)
